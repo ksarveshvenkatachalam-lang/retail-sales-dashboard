@@ -47,10 +47,10 @@ def load_data():
     # Option 1: Try to load from local file (CSV or ZIP)
     # Check for ZIP files first (compressed versions)
     possible_files = [
+        'sampledata.csv.zip',   # YOUR EXACT FILE! (no spaces, .csv.zip)
         'sample data.zip',      # With space
         'sampledata.zip',       # Without space
         'sample data.csv.zip',  # Alternative naming
-        'sampledata.csv.zip',   # Alternative naming
         'sample data.csv',      # Fallback to CSV
         'sampledata.csv',
         'sample_data.csv',
