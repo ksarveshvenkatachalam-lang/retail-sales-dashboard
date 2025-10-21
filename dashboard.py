@@ -43,7 +43,45 @@ st.markdown("""
 def load_data():
     """Load and preprocess the sales data"""
     try:
-        df = pd.read_csv('sample data.csv')
+        # Read CSV with error handling
+        df = pd.read_csv('sample data.csv', encoding='utf-8', skipinitialspace=True)
+        
+        # Clean column names - remove extra spaces and standardize
+        df.columns = df.columns.str.strip().str.upper()
+        
+        # Display actual column names for debugging (comment out in production)
+        # st.write("Detected columns:", list(df.columns))
+        
+        # Create standardized column name mapping
+        column_mapping = {}
+        for col in df.columns:
+            if 'YEAR' in col:
+                column_mapping[col] = 'YEAR'
+            elif 'MONTH' in col:
+                column_mapping[col] = 'MONTH'
+            elif 'SUPPLIER' in col:
+                column_mapping[col] = 'SUPPLIER'
+            elif 'ITEM' in col and ('CODE' in col or 'COD' in col):
+                column_mapping[col] = 'ITEM_CODE'
+            elif 'ITEM' in col and 'DESC' in col:
+                column_mapping[col] = 'ITEM_DESCRIPTION'
+            elif 'ITEM' in col and 'TYPE' in col:
+                column_mapping[col] = 'ITEM_TYPE'
+            elif 'RETAIL' in col and 'SAL' in col:
+                column_mapping[col] = 'RETAIL_SALES'
+            elif 'RETAIL' in col and 'TRA' in col:
+                column_mapping[col] = 'RETAIL_TRANSFERS'
+            elif 'WAREHOUSE' in col:
+                column_mapping[col] = 'WAREHOUSE_SALES'
+        
+        # Rename columns
+        df = df.rename(columns=column_mapping)
+        
+        # Ensure numeric columns are properly typed
+        numeric_cols = ['RETAIL_SALES', 'RETAIL_TRANSFERS', 'WAREHOUSE_SALES']
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         
         # Create date features
         df['Date'] = pd.to_datetime(
@@ -54,12 +92,24 @@ def load_data():
         df['Year_Month'] = df['Date'].dt.to_period('M').astype(str)
         
         return df
+    except FileNotFoundError:
+        st.error("❌ Error: 'sample data.csv' not found. Please ensure the file is in the same directory as this script.")
+        st.stop()
     except Exception as e:
-        st.error(f"Error loading data: {str(e)}")
+        st.error(f"❌ Error loading data: {str(e)}")
+        st.info("💡 Tip: Check that your CSV file has the correct format and column names")
         st.stop()
 
 # Load the data
 df = load_data()
+
+# Check if required columns exist
+required_cols = ['YEAR', 'MONTH', 'ITEM_TYPE', 'RETAIL_SALES', 'WAREHOUSE_SALES']
+missing_cols = [col for col in required_cols if col not in df.columns]
+if missing_cols:
+    st.error(f"❌ Missing required columns: {', '.join(missing_cols)}")
+    st.info(f"📋 Available columns: {', '.join(df.columns)}")
+    st.stop()
 
 # ============================================================================
 # HEADER
@@ -93,7 +143,7 @@ selected_months = st.sidebar.multiselect(
 )
 
 # Item Type filter
-item_types = sorted(df['ITEM TYPE'].dropna().unique())
+item_types = sorted(df['ITEM_TYPE'].dropna().unique())
 selected_types = st.sidebar.multiselect(
     "Select Item Type(s):",
     options=item_types,
@@ -105,13 +155,14 @@ selected_types = st.sidebar.multiselect(
 df_filtered = df[
     (df['YEAR'].isin(selected_years)) &
     (df['MONTH'].isin(selected_months)) &
-    (df['ITEM TYPE'].isin(selected_types))
+    (df['ITEM_TYPE'].isin(selected_types))
 ]
 
 # Filter summary
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"**Showing:** {len(df_filtered):,} / {len(df):,} records")
-st.sidebar.markdown(f"**Filtered:** {((1 - len(df_filtered)/len(df)) * 100):.1f}% excluded")
+if len(df) > 0:
+    st.sidebar.markdown(f"**Filtered:** {((1 - len(df_filtered)/len(df)) * 100):.1f}% excluded")
 
 # ============================================================================
 # KEY METRICS
@@ -119,7 +170,7 @@ st.sidebar.markdown(f"**Filtered:** {((1 - len(df_filtered)/len(df)) * 100):.1f}
 col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
-    total_sales = df_filtered['RETAIL SALES'].sum()
+    total_sales = df_filtered['RETAIL_SALES'].sum()
     st.metric(
         label="💰 Total Sales",
         value=f"${total_sales:,.0f}",
@@ -127,7 +178,7 @@ with col1:
     )
 
 with col2:
-    avg_sale = df_filtered['RETAIL SALES'].mean()
+    avg_sale = df_filtered['RETAIL_SALES'].mean() if len(df_filtered) > 0 else 0
     st.metric(
         label="📊 Avg Transaction",
         value=f"${avg_sale:.2f}",
@@ -143,7 +194,7 @@ with col3:
     )
 
 with col4:
-    warehouse_units = df_filtered['WAREHOUSE SALES'].sum()
+    warehouse_units = df_filtered['WAREHOUSE_SALES'].sum()
     st.metric(
         label="📦 Warehouse Units",
         value=f"{warehouse_units:,.0f}",
@@ -151,7 +202,7 @@ with col4:
     )
 
 with col5:
-    unique_products = df_filtered['ITEM DESCRIPTION'].nunique()
+    unique_products = df_filtered['ITEM_DESCRIPTION'].nunique() if 'ITEM_DESCRIPTION' in df_filtered.columns else 0
     st.metric(
         label="🏷️ Unique Products",
         value=f"{unique_products:,}",
@@ -169,15 +220,15 @@ col1, col2 = st.columns(2)
 
 with col1:
     # Monthly trend
-    monthly_sales = df_filtered.groupby('Year_Month')['RETAIL SALES'].sum().reset_index()
+    monthly_sales = df_filtered.groupby('Year_Month')['RETAIL_SALES'].sum().reset_index()
     monthly_sales['Year_Month'] = pd.to_datetime(monthly_sales['Year_Month'])
     
     fig_trend = px.line(
         monthly_sales,
         x='Year_Month',
-        y='RETAIL SALES',
+        y='RETAIL_SALES',
         title='Monthly Sales Trend',
-        labels={'Year_Month': 'Month', 'RETAIL SALES': 'Sales ($)'}
+        labels={'Year_Month': 'Month', 'RETAIL_SALES': 'Sales ($)'}
     )
     fig_trend.update_traces(line_color='#667eea', line_width=3)
     fig_trend.update_layout(
@@ -189,17 +240,17 @@ with col1:
 
 with col2:
     # Yearly comparison
-    yearly_sales = df_filtered.groupby('YEAR')['RETAIL SALES'].sum().reset_index()
+    yearly_sales = df_filtered.groupby('YEAR')['RETAIL_SALES'].sum().reset_index()
     
     fig_yearly = px.bar(
         yearly_sales,
         x='YEAR',
-        y='RETAIL SALES',
+        y='RETAIL_SALES',
         title='Annual Sales Comparison',
-        labels={'YEAR': 'Year', 'RETAIL SALES': 'Sales ($)'},
-        color='RETAIL SALES',
+        labels={'YEAR': 'Year', 'RETAIL_SALES': 'Sales ($)'},
+        color='RETAIL_SALES',
         color_continuous_scale='Viridis',
-        text='RETAIL SALES'
+        text='RETAIL_SALES'
     )
     fig_yearly.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
     fig_yearly.update_layout(
@@ -219,18 +270,18 @@ col1, col2 = st.columns(2)
 
 with col1:
     # Sales by item type
-    type_sales = df_filtered.groupby('ITEM TYPE')['RETAIL SALES'].sum().reset_index()
-    type_sales = type_sales.sort_values('RETAIL SALES', ascending=False)
+    type_sales = df_filtered.groupby('ITEM_TYPE')['RETAIL_SALES'].sum().reset_index()
+    type_sales = type_sales.sort_values('RETAIL_SALES', ascending=False)
     
     fig_types = px.bar(
         type_sales,
-        x='ITEM TYPE',
-        y='RETAIL SALES',
+        x='ITEM_TYPE',
+        y='RETAIL_SALES',
         title='Sales by Product Category',
-        labels={'ITEM TYPE': 'Category', 'RETAIL SALES': 'Sales ($)'},
-        color='RETAIL SALES',
+        labels={'ITEM_TYPE': 'Category', 'RETAIL_SALES': 'Sales ($)'},
+        color='RETAIL_SALES',
         color_continuous_scale='Blues',
-        text='RETAIL SALES'
+        text='RETAIL_SALES'
     )
     fig_types.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
     fig_types.update_layout(
@@ -243,8 +294,8 @@ with col2:
     # Pie chart for market share
     fig_pie = px.pie(
         type_sales,
-        values='RETAIL SALES',
-        names='ITEM TYPE',
+        values='RETAIL_SALES',
+        names='ITEM_TYPE',
         title='Market Share by Category',
         hole=0.4,
         color_discrete_sequence=px.colors.sequential.RdBu
@@ -267,49 +318,55 @@ col1, col2 = st.columns(2)
 
 with col1:
     # Top 10 products
-    top_products = df_filtered.groupby('ITEM DESCRIPTION')['RETAIL SALES'].sum().nlargest(10).reset_index()
-    
-    fig_products = px.bar(
-        top_products,
-        y='ITEM DESCRIPTION',
-        x='RETAIL SALES',
-        orientation='h',
-        title='Top 10 Products by Sales',
-        labels={'ITEM DESCRIPTION': 'Product', 'RETAIL SALES': 'Sales ($)'},
-        color='RETAIL SALES',
-        color_continuous_scale='Reds',
-        text='RETAIL SALES'
-    )
-    fig_products.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
-    fig_products.update_layout(
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        yaxis={'categoryorder': 'total ascending'}
-    )
-    st.plotly_chart(fig_products, use_container_width=True)
+    if 'ITEM_DESCRIPTION' in df_filtered.columns:
+        top_products = df_filtered.groupby('ITEM_DESCRIPTION')['RETAIL_SALES'].sum().nlargest(10).reset_index()
+        
+        fig_products = px.bar(
+            top_products,
+            y='ITEM_DESCRIPTION',
+            x='RETAIL_SALES',
+            orientation='h',
+            title='Top 10 Products by Sales',
+            labels={'ITEM_DESCRIPTION': 'Product', 'RETAIL_SALES': 'Sales ($)'},
+            color='RETAIL_SALES',
+            color_continuous_scale='Reds',
+            text='RETAIL_SALES'
+        )
+        fig_products.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
+        fig_products.update_layout(
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            yaxis={'categoryorder': 'total ascending'}
+        )
+        st.plotly_chart(fig_products, use_container_width=True)
+    else:
+        st.info("Product description data not available")
 
 with col2:
     # Top 10 suppliers
-    top_suppliers = df_filtered.groupby('SUPPLIER')['RETAIL SALES'].sum().nlargest(10).reset_index()
-    
-    fig_suppliers = px.bar(
-        top_suppliers,
-        y='SUPPLIER',
-        x='RETAIL SALES',
-        orientation='h',
-        title='Top 10 Suppliers by Sales',
-        labels={'SUPPLIER': 'Supplier', 'RETAIL SALES': 'Sales ($)'},
-        color='RETAIL SALES',
-        color_continuous_scale='Greens',
-        text='RETAIL SALES'
-    )
-    fig_suppliers.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
-    fig_suppliers.update_layout(
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
-        yaxis={'categoryorder': 'total ascending'}
-    )
-    st.plotly_chart(fig_suppliers, use_container_width=True)
+    if 'SUPPLIER' in df_filtered.columns:
+        top_suppliers = df_filtered.groupby('SUPPLIER')['RETAIL_SALES'].sum().nlargest(10).reset_index()
+        
+        fig_suppliers = px.bar(
+            top_suppliers,
+            y='SUPPLIER',
+            x='RETAIL_SALES',
+            orientation='h',
+            title='Top 10 Suppliers by Sales',
+            labels={'SUPPLIER': 'Supplier', 'RETAIL_SALES': 'Sales ($)'},
+            color='RETAIL_SALES',
+            color_continuous_scale='Greens',
+            text='RETAIL_SALES'
+        )
+        fig_suppliers.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
+        fig_suppliers.update_layout(
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            yaxis={'categoryorder': 'total ascending'}
+        )
+        st.plotly_chart(fig_suppliers, use_container_width=True)
+    else:
+        st.info("Supplier data not available")
 
 st.markdown("---")
 
@@ -323,11 +380,11 @@ col1, col2 = st.columns(2)
 with col1:
     # Sales distribution histogram
     fig_dist = px.histogram(
-        df_filtered[df_filtered['RETAIL SALES'] > 0],
-        x='RETAIL SALES',
+        df_filtered[df_filtered['RETAIL_SALES'] > 0],
+        x='RETAIL_SALES',
         nbins=50,
         title='Sales Amount Distribution',
-        labels={'RETAIL SALES': 'Sale Amount ($)'},
+        labels={'RETAIL_SALES': 'Sale Amount ($)'},
         color_discrete_sequence=['#764ba2']
     )
     fig_dist.update_layout(
@@ -339,27 +396,30 @@ with col1:
 
 with col2:
     # Box plot by category
-    top_3_types = df_filtered.groupby('ITEM TYPE')['RETAIL SALES'].sum().nlargest(3).index
+    top_3_types = df_filtered.groupby('ITEM_TYPE')['RETAIL_SALES'].sum().nlargest(3).index
     df_box = df_filtered[
-        df_filtered['ITEM TYPE'].isin(top_3_types) & 
-        (df_filtered['RETAIL SALES'] > 0)
+        df_filtered['ITEM_TYPE'].isin(top_3_types) & 
+        (df_filtered['RETAIL_SALES'] > 0)
     ]
     
-    fig_box = px.box(
-        df_box,
-        x='ITEM TYPE',
-        y='RETAIL SALES',
-        title='Sales Distribution by Top 3 Categories',
-        labels={'ITEM TYPE': 'Category', 'RETAIL SALES': 'Sale Amount ($)'},
-        color='ITEM TYPE',
-        color_discrete_sequence=px.colors.qualitative.Set2
-    )
-    fig_box.update_layout(
-        showlegend=False,
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)'
-    )
-    st.plotly_chart(fig_box, use_container_width=True)
+    if len(df_box) > 0:
+        fig_box = px.box(
+            df_box,
+            x='ITEM_TYPE',
+            y='RETAIL_SALES',
+            title='Sales Distribution by Top 3 Categories',
+            labels={'ITEM_TYPE': 'Category', 'RETAIL_SALES': 'Sale Amount ($)'},
+            color='ITEM_TYPE',
+            color_discrete_sequence=px.colors.qualitative.Set2
+        )
+        fig_box.update_layout(
+            showlegend=False,
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)'
+        )
+        st.plotly_chart(fig_box, use_container_width=True)
+    else:
+        st.info("No data available for box plot")
 
 st.markdown("---")
 
@@ -369,23 +429,26 @@ st.markdown("---")
 st.subheader("🔥 Monthly Sales Heatmap")
 
 heatmap_data = df_filtered.pivot_table(
-    values='RETAIL SALES',
+    values='RETAIL_SALES',
     index='MONTH',
     columns='YEAR',
     aggfunc='sum',
     fill_value=0
 )
 
-fig_heatmap = px.imshow(
-    heatmap_data,
-    labels=dict(x="Year", y="Month", color="Sales ($)"),
-    title="Sales Heatmap: Month vs Year",
-    color_continuous_scale='RdYlGn',
-    aspect='auto',
-    text_auto='.0f'
-)
-fig_heatmap.update_xaxes(side="bottom")
-st.plotly_chart(fig_heatmap, use_container_width=True)
+if not heatmap_data.empty:
+    fig_heatmap = px.imshow(
+        heatmap_data,
+        labels=dict(x="Year", y="Month", color="Sales ($)"),
+        title="Sales Heatmap: Month vs Year",
+        color_continuous_scale='RdYlGn',
+        aspect='auto',
+        text_auto='.0f'
+    )
+    fig_heatmap.update_xaxes(side="bottom")
+    st.plotly_chart(fig_heatmap, use_container_width=True)
+else:
+    st.info("No data available for heatmap")
 
 st.markdown("---")
 
@@ -394,18 +457,32 @@ st.markdown("---")
 # ============================================================================
 st.subheader("🔍 Warehouse vs Retail Analysis")
 
-fig_scatter = px.scatter(
-    df_filtered,
-    x='WAREHOUSE SALES',
-    y='RETAIL SALES',
-    color='ITEM TYPE',
-    size='RETAIL SALES',
-    hover_data=['ITEM DESCRIPTION'],
-    title='Warehouse Sales vs Retail Sales',
-    labels={'WAREHOUSE SALES': 'Warehouse Units', 'RETAIL SALES': 'Retail Sales ($)'},
-    opacity=0.6,
-    color_discrete_sequence=px.colors.qualitative.Bold
-)
+if 'ITEM_DESCRIPTION' in df_filtered.columns:
+    fig_scatter = px.scatter(
+        df_filtered,
+        x='WAREHOUSE_SALES',
+        y='RETAIL_SALES',
+        color='ITEM_TYPE',
+        size='RETAIL_SALES',
+        hover_data=['ITEM_DESCRIPTION'],
+        title='Warehouse Sales vs Retail Sales',
+        labels={'WAREHOUSE_SALES': 'Warehouse Units', 'RETAIL_SALES': 'Retail Sales ($)'},
+        opacity=0.6,
+        color_discrete_sequence=px.colors.qualitative.Bold
+    )
+else:
+    fig_scatter = px.scatter(
+        df_filtered,
+        x='WAREHOUSE_SALES',
+        y='RETAIL_SALES',
+        color='ITEM_TYPE',
+        size='RETAIL_SALES',
+        title='Warehouse Sales vs Retail Sales',
+        labels={'WAREHOUSE_SALES': 'Warehouse Units', 'RETAIL_SALES': 'Retail Sales ($)'},
+        opacity=0.6,
+        color_discrete_sequence=px.colors.qualitative.Bold
+    )
+
 fig_scatter.update_layout(
     plot_bgcolor='rgba(0,0,0,0)',
     paper_bgcolor='rgba(0,0,0,0)'
@@ -422,11 +499,17 @@ st.subheader("📋 Detailed Data View")
 show_data = st.checkbox("Show Raw Data", value=False)
 
 if show_data:
+    # Select columns that exist
+    display_cols = ['Date', 'YEAR', 'MONTH', 'SUPPLIER', 'ITEM_TYPE', 'RETAIL_SALES', 'WAREHOUSE_SALES']
+    if 'ITEM_DESCRIPTION' in df_filtered.columns:
+        display_cols.insert(4, 'ITEM_DESCRIPTION')
+    if 'RETAIL_TRANSFERS' in df_filtered.columns:
+        display_cols.append('RETAIL_TRANSFERS')
+    
+    available_cols = [col for col in display_cols if col in df_filtered.columns]
+    
     st.dataframe(
-        df_filtered[[
-            'Date', 'SUPPLIER', 'ITEM DESCRIPTION', 'ITEM TYPE',
-            'RETAIL SALES', 'WAREHOUSE SALES', 'RETAIL TRANSFERS'
-        ]].head(100),
+        df_filtered[available_cols].head(100),
         use_container_width=True
     )
     
@@ -449,41 +532,50 @@ st.subheader("💡 Key Insights")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    best_year = df_filtered.groupby('YEAR')['RETAIL SALES'].sum().idxmax()
-    best_year_sales = df_filtered.groupby('YEAR')['RETAIL SALES'].sum().max()
-    st.info(f"""
-    **📅 Best Year**
-    
-    **{int(best_year)}** generated the highest sales
-    
-    Total: ${best_year_sales:,.0f}
-    """)
+    if len(df_filtered) > 0:
+        best_year = df_filtered.groupby('YEAR')['RETAIL_SALES'].sum().idxmax()
+        best_year_sales = df_filtered.groupby('YEAR')['RETAIL_SALES'].sum().max()
+        st.info(f"""
+        **📅 Best Year**
+        
+        **{int(best_year)}** generated the highest sales
+        
+        Total: ${best_year_sales:,.0f}
+        """)
+    else:
+        st.info("No data available")
 
 with col2:
-    best_month = df_filtered.groupby('MONTH')['RETAIL SALES'].sum().idxmax()
-    month_names = {
-        1: 'January', 2: 'February', 3: 'March', 4: 'April',
-        5: 'May', 6: 'June', 7: 'July', 8: 'August',
-        9: 'September', 10: 'October', 11: 'November', 12: 'December'
-    }
-    st.success(f"""
-    **📆 Peak Month**
-    
-    **{month_names[best_month]}** shows highest sales
-    
-    Consistent peak period
-    """)
+    if len(df_filtered) > 0:
+        best_month = df_filtered.groupby('MONTH')['RETAIL_SALES'].sum().idxmax()
+        month_names = {
+            1: 'January', 2: 'February', 3: 'March', 4: 'April',
+            5: 'May', 6: 'June', 7: 'July', 8: 'August',
+            9: 'September', 10: 'October', 11: 'November', 12: 'December'
+        }
+        st.success(f"""
+        **📆 Peak Month**
+        
+        **{month_names.get(best_month, best_month)}** shows highest sales
+        
+        Consistent peak period
+        """)
+    else:
+        st.info("No data available")
 
 with col3:
-    best_category = df_filtered.groupby('ITEM TYPE')['RETAIL SALES'].sum().idxmax()
-    category_sales = df_filtered.groupby('ITEM TYPE')['RETAIL SALES'].sum().max()
-    st.warning(f"""
-    **🏷️ Top Category**
-    
-    **{best_category}** leads in revenue
-    
-    Total: ${category_sales:,.0f}
-    """)
+    if len(df_filtered) > 0:
+        best_category = df_filtered.groupby('ITEM_TYPE')['RETAIL_SALES'].sum().idxmax()
+        category_sales = df_filtered.groupby('ITEM_TYPE')['RETAIL_SALES'].sum().max()
+        st.warning(f"""
+        **🏷️ Top Category**
+        
+        **{best_category}** leads in revenue
+        
+        Total: ${category_sales:,.0f}
+        """)
+    else:
+        st.info("No data available")
 
 # ============================================================================
 # FOOTER
