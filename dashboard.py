@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
+import os
 
 # ============================================================================
 # PAGE CONFIGURATION
@@ -37,85 +38,148 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ============================================================================
-# LOAD DATA
+# LOAD DATA WITH ROBUST ERROR HANDLING
 # ============================================================================
 @st.cache_data
 def load_data():
-    """Load and preprocess the sales data"""
+    """Load and preprocess the sales data with comprehensive error handling"""
+    
+    # Try different possible filenames
+    possible_files = [
+        'sampledata.csv',
+        'sample data.csv',
+        'sample_data.csv',
+        'sampledata.csv.csv'
+    ]
+    
+    file_found = None
+    for filename in possible_files:
+        if os.path.exists(filename):
+            file_found = filename
+            break
+    
+    if file_found is None:
+        st.error("❌ **CSV file not found!**")
+        st.info("💡 Looking for one of these files: " + ", ".join(possible_files))
+        st.info("📁 Current directory contents:")
+        try:
+            files = [f for f in os.listdir('.') if f.endswith('.csv')]
+            if files:
+                st.write("CSV files found:", files)
+            else:
+                st.write("No CSV files found in current directory")
+        except:
+            pass
+        st.stop()
+    
     try:
-        # Read CSV with error handling
-        df = pd.read_csv('sample data.csv', encoding='utf-8', skipinitialspace=True)
+        # First, let's check what's in the file
+        with open(file_found, 'r', encoding='utf-8') as f:
+            first_line = f.readline()
+            
+        # Check if file is empty
+        if not first_line.strip():
+            st.error("❌ The CSV file is empty!")
+            st.stop()
         
-        # Clean column names - remove extra spaces and standardize
+        # Read the CSV with multiple fallback options
+        try:
+            # Try standard read first
+            df = pd.read_csv(file_found, encoding='utf-8')
+        except:
+            try:
+                # Try with different encoding
+                df = pd.read_csv(file_found, encoding='latin-1')
+            except:
+                try:
+                    # Try with Python engine for more flexibility
+                    df = pd.read_csv(file_found, encoding='utf-8', engine='python', sep=None)
+                except Exception as e:
+                    st.error(f"❌ Cannot parse CSV file: {str(e)}")
+                    st.info(f"First line of file: {first_line}")
+                    st.stop()
+        
+        # Check if dataframe is empty
+        if df.empty:
+            st.error("❌ CSV file loaded but contains no data!")
+            st.stop()
+        
+        # Display column info for debugging (you can comment this out later)
+        st.success(f"✅ Successfully loaded {len(df):,} rows from: **{file_found}**")
+        with st.expander("🔍 Click to see detected columns"):
+            st.write("**Original Columns:**", list(df.columns))
+        
+        # Clean and standardize column names
+        # Remove leading/trailing spaces and convert to uppercase
         df.columns = df.columns.str.strip().str.upper()
         
-        # Display actual column names for debugging (comment out in production)
-        # st.write("Detected columns:", list(df.columns))
+        # Replace spaces with underscores for easier handling
+        df.columns = df.columns.str.replace(' ', '_')
         
-        # Create standardized column name mapping
-        column_mapping = {}
-        for col in df.columns:
-            if 'YEAR' in col:
-                column_mapping[col] = 'YEAR'
-            elif 'MONTH' in col:
-                column_mapping[col] = 'MONTH'
-            elif 'SUPPLIER' in col:
-                column_mapping[col] = 'SUPPLIER'
-            elif 'ITEM' in col and ('CODE' in col or 'COD' in col):
-                column_mapping[col] = 'ITEM_CODE'
-            elif 'ITEM' in col and 'DESC' in col:
-                column_mapping[col] = 'ITEM_DESCRIPTION'
-            elif 'ITEM' in col and 'TYPE' in col:
-                column_mapping[col] = 'ITEM_TYPE'
-            elif 'RETAIL' in col and 'SAL' in col:
-                column_mapping[col] = 'RETAIL_SALES'
-            elif 'RETAIL' in col and 'TRA' in col:
-                column_mapping[col] = 'RETAIL_TRANSFERS'
-            elif 'WAREHOUSE' in col:
-                column_mapping[col] = 'WAREHOUSE_SALES'
+        # Show cleaned column names
+        with st.expander("🔍 Click to see cleaned columns"):
+            st.write("**Cleaned Columns:**", list(df.columns))
         
-        # Rename columns
-        df = df.rename(columns=column_mapping)
+        # Ensure required columns exist with proper naming
+        required_mappings = {
+            'YEAR': 'YEAR',
+            'MONTH': 'MONTH',
+            'SUPPLIER': 'SUPPLIER',
+            'ITEM_CODE': 'ITEM_CODE',
+            'ITEM_DESCRIPTION': 'ITEM_DESCRIPTION',
+            'ITEM_TYPE': 'ITEM_TYPE',
+            'RETAIL_SALES': 'RETAIL_SALES',
+            'RETAIL_TRANSFERS': 'RETAIL_TRANSFERS',
+            'WAREHOUSE_SALES': 'WAREHOUSE_SALES'
+        }
         
-        # Ensure numeric columns are properly typed
-        numeric_cols = ['RETAIL_SALES', 'RETAIL_TRANSFERS', 'WAREHOUSE_SALES']
+        # Check which columns we have
+        missing = []
+        for required_col in required_mappings.keys():
+            if required_col not in df.columns:
+                missing.append(required_col)
+        
+        if missing:
+            st.error(f"❌ Missing required columns: {', '.join(missing)}")
+            st.info(f"📋 Available columns: {', '.join(df.columns)}")
+            st.stop()
+        
+        # Convert numeric columns
+        numeric_cols = ['RETAIL_SALES', 'RETAIL_TRANSFERS', 'WAREHOUSE_SALES', 'YEAR', 'MONTH']
         for col in numeric_cols:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
         
         # Create date features
         df['Date'] = pd.to_datetime(
-            df['YEAR'].astype(str) + '-' + df['MONTH'].astype(str) + '-01'
+            df['YEAR'].astype(int).astype(str) + '-' + 
+            df['MONTH'].astype(int).astype(str) + '-01',
+            errors='coerce'
         )
         df['Quarter'] = df['Date'].dt.quarter
         df['Month_Name'] = df['Date'].dt.month_name()
         df['Year_Month'] = df['Date'].dt.to_period('M').astype(str)
         
+        # Remove any rows with invalid dates
+        df = df.dropna(subset=['Date'])
+        
         return df
-    except FileNotFoundError:
-        st.error("❌ Error: 'sample data.csv' not found. Please ensure the file is in the same directory as this script.")
-        st.stop()
+        
     except Exception as e:
-        st.error(f"❌ Error loading data: {str(e)}")
-        st.info("💡 Tip: Check that your CSV file has the correct format and column names")
+        st.error(f"❌ Unexpected error loading data: {str(e)}")
+        import traceback
+        with st.expander("🐛 Click to see full error details"):
+            st.code(traceback.format_exc())
         st.stop()
 
 # Load the data
 df = load_data()
 
-# Check if required columns exist
-required_cols = ['YEAR', 'MONTH', 'ITEM_TYPE', 'RETAIL_SALES', 'WAREHOUSE_SALES']
-missing_cols = [col for col in required_cols if col not in df.columns]
-if missing_cols:
-    st.error(f"❌ Missing required columns: {', '.join(missing_cols)}")
-    st.info(f"📋 Available columns: {', '.join(df.columns)}")
-    st.stop()
-
 # ============================================================================
 # HEADER
 # ============================================================================
 st.title("📊 Retail Sales Analytics Dashboard")
-st.markdown("### Interactive Analysis of 307K+ Transactions")
+st.markdown(f"### Interactive Analysis of {len(df):,} Transactions")
 st.markdown("---")
 
 # ============================================================================
@@ -202,7 +266,7 @@ with col4:
     )
 
 with col5:
-    unique_products = df_filtered['ITEM_DESCRIPTION'].nunique() if 'ITEM_DESCRIPTION' in df_filtered.columns else 0
+    unique_products = df_filtered['ITEM_DESCRIPTION'].nunique()
     st.metric(
         label="🏷️ Unique Products",
         value=f"{unique_products:,}",
@@ -318,55 +382,49 @@ col1, col2 = st.columns(2)
 
 with col1:
     # Top 10 products
-    if 'ITEM_DESCRIPTION' in df_filtered.columns:
-        top_products = df_filtered.groupby('ITEM_DESCRIPTION')['RETAIL_SALES'].sum().nlargest(10).reset_index()
-        
-        fig_products = px.bar(
-            top_products,
-            y='ITEM_DESCRIPTION',
-            x='RETAIL_SALES',
-            orientation='h',
-            title='Top 10 Products by Sales',
-            labels={'ITEM_DESCRIPTION': 'Product', 'RETAIL_SALES': 'Sales ($)'},
-            color='RETAIL_SALES',
-            color_continuous_scale='Reds',
-            text='RETAIL_SALES'
-        )
-        fig_products.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
-        fig_products.update_layout(
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            yaxis={'categoryorder': 'total ascending'}
-        )
-        st.plotly_chart(fig_products, use_container_width=True)
-    else:
-        st.info("Product description data not available")
+    top_products = df_filtered.groupby('ITEM_DESCRIPTION')['RETAIL_SALES'].sum().nlargest(10).reset_index()
+    
+    fig_products = px.bar(
+        top_products,
+        y='ITEM_DESCRIPTION',
+        x='RETAIL_SALES',
+        orientation='h',
+        title='Top 10 Products by Sales',
+        labels={'ITEM_DESCRIPTION': 'Product', 'RETAIL_SALES': 'Sales ($)'},
+        color='RETAIL_SALES',
+        color_continuous_scale='Reds',
+        text='RETAIL_SALES'
+    )
+    fig_products.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
+    fig_products.update_layout(
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        yaxis={'categoryorder': 'total ascending'}
+    )
+    st.plotly_chart(fig_products, use_container_width=True)
 
 with col2:
     # Top 10 suppliers
-    if 'SUPPLIER' in df_filtered.columns:
-        top_suppliers = df_filtered.groupby('SUPPLIER')['RETAIL_SALES'].sum().nlargest(10).reset_index()
-        
-        fig_suppliers = px.bar(
-            top_suppliers,
-            y='SUPPLIER',
-            x='RETAIL_SALES',
-            orientation='h',
-            title='Top 10 Suppliers by Sales',
-            labels={'SUPPLIER': 'Supplier', 'RETAIL_SALES': 'Sales ($)'},
-            color='RETAIL_SALES',
-            color_continuous_scale='Greens',
-            text='RETAIL_SALES'
-        )
-        fig_suppliers.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
-        fig_suppliers.update_layout(
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)',
-            yaxis={'categoryorder': 'total ascending'}
-        )
-        st.plotly_chart(fig_suppliers, use_container_width=True)
-    else:
-        st.info("Supplier data not available")
+    top_suppliers = df_filtered.groupby('SUPPLIER')['RETAIL_SALES'].sum().nlargest(10).reset_index()
+    
+    fig_suppliers = px.bar(
+        top_suppliers,
+        y='SUPPLIER',
+        x='RETAIL_SALES',
+        orientation='h',
+        title='Top 10 Suppliers by Sales',
+        labels={'SUPPLIER': 'Supplier', 'RETAIL_SALES': 'Sales ($)'},
+        color='RETAIL_SALES',
+        color_continuous_scale='Greens',
+        text='RETAIL_SALES'
+    )
+    fig_suppliers.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
+    fig_suppliers.update_layout(
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        yaxis={'categoryorder': 'total ascending'}
+    )
+    st.plotly_chart(fig_suppliers, use_container_width=True)
 
 st.markdown("---")
 
@@ -457,32 +515,18 @@ st.markdown("---")
 # ============================================================================
 st.subheader("🔍 Warehouse vs Retail Analysis")
 
-if 'ITEM_DESCRIPTION' in df_filtered.columns:
-    fig_scatter = px.scatter(
-        df_filtered,
-        x='WAREHOUSE_SALES',
-        y='RETAIL_SALES',
-        color='ITEM_TYPE',
-        size='RETAIL_SALES',
-        hover_data=['ITEM_DESCRIPTION'],
-        title='Warehouse Sales vs Retail Sales',
-        labels={'WAREHOUSE_SALES': 'Warehouse Units', 'RETAIL_SALES': 'Retail Sales ($)'},
-        opacity=0.6,
-        color_discrete_sequence=px.colors.qualitative.Bold
-    )
-else:
-    fig_scatter = px.scatter(
-        df_filtered,
-        x='WAREHOUSE_SALES',
-        y='RETAIL_SALES',
-        color='ITEM_TYPE',
-        size='RETAIL_SALES',
-        title='Warehouse Sales vs Retail Sales',
-        labels={'WAREHOUSE_SALES': 'Warehouse Units', 'RETAIL_SALES': 'Retail Sales ($)'},
-        opacity=0.6,
-        color_discrete_sequence=px.colors.qualitative.Bold
-    )
-
+fig_scatter = px.scatter(
+    df_filtered,
+    x='WAREHOUSE_SALES',
+    y='RETAIL_SALES',
+    color='ITEM_TYPE',
+    size='RETAIL_SALES',
+    hover_data=['ITEM_DESCRIPTION'],
+    title='Warehouse Sales vs Retail Sales',
+    labels={'WAREHOUSE_SALES': 'Warehouse Units', 'RETAIL_SALES': 'Retail Sales ($)'},
+    opacity=0.6,
+    color_discrete_sequence=px.colors.qualitative.Bold
+)
 fig_scatter.update_layout(
     plot_bgcolor='rgba(0,0,0,0)',
     paper_bgcolor='rgba(0,0,0,0)'
@@ -499,17 +543,13 @@ st.subheader("📋 Detailed Data View")
 show_data = st.checkbox("Show Raw Data", value=False)
 
 if show_data:
-    # Select columns that exist
-    display_cols = ['Date', 'YEAR', 'MONTH', 'SUPPLIER', 'ITEM_TYPE', 'RETAIL_SALES', 'WAREHOUSE_SALES']
-    if 'ITEM_DESCRIPTION' in df_filtered.columns:
-        display_cols.insert(4, 'ITEM_DESCRIPTION')
-    if 'RETAIL_TRANSFERS' in df_filtered.columns:
-        display_cols.append('RETAIL_TRANSFERS')
-    
-    available_cols = [col for col in display_cols if col in df_filtered.columns]
+    display_cols = [
+        'Date', 'YEAR', 'MONTH', 'SUPPLIER', 'ITEM_DESCRIPTION', 
+        'ITEM_TYPE', 'RETAIL_SALES', 'WAREHOUSE_SALES', 'RETAIL_TRANSFERS'
+    ]
     
     st.dataframe(
-        df_filtered[available_cols].head(100),
+        df_filtered[display_cols].head(100),
         use_container_width=True
     )
     
@@ -556,7 +596,7 @@ with col2:
         st.success(f"""
         **📆 Peak Month**
         
-        **{month_names.get(best_month, best_month)}** shows highest sales
+        **{month_names.get(int(best_month), best_month)}** shows highest sales
         
         Consistent peak period
         """)
