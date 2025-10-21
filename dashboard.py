@@ -570,23 +570,35 @@ st.markdown("---")
 # ============================================================================
 st.subheader("🔍 Warehouse vs Retail Analysis")
 
-fig_scatter = px.scatter(
-    df_filtered,
-    x='WAREHOUSE_SALES',
-    y='RETAIL_SALES',
-    color='ITEM_TYPE',
-    size='RETAIL_SALES',
-    hover_data=['ITEM_DESCRIPTION'],
-    title='Warehouse Sales vs Retail Sales',
-    labels={'WAREHOUSE_SALES': 'Warehouse Units', 'RETAIL_SALES': 'Retail Sales ($)'},
-    opacity=0.6,
-    color_discrete_sequence=px.colors.qualitative.Bold
-)
-fig_scatter.update_layout(
-    plot_bgcolor='rgba(0,0,0,0)',
-    paper_bgcolor='rgba(0,0,0,0)'
-)
-st.plotly_chart(fig_scatter, use_container_width=True)
+# Filter data for scatter plot - remove zeros and invalid values
+df_scatter = df_filtered[
+    (df_filtered['RETAIL_SALES'] > 0) & 
+    (df_filtered['WAREHOUSE_SALES'] >= 0)
+].copy()
+
+if len(df_scatter) > 0:
+    # Limit to reasonable sample size for performance
+    if len(df_scatter) > 5000:
+        df_scatter = df_scatter.sample(n=5000, random_state=42)
+    
+    fig_scatter = px.scatter(
+        df_scatter,
+        x='WAREHOUSE_SALES',
+        y='RETAIL_SALES',
+        color='ITEM_TYPE',
+        size='RETAIL_SALES',
+        hover_data=['ITEM_DESCRIPTION'],
+        title='Warehouse Sales vs Retail Sales',
+        labels={'WAREHOUSE_SALES': 'Warehouse Units', 'RETAIL_SALES': 'Retail Sales ($)'},
+        opacity=0.6
+    )
+    fig_scatter.update_layout(
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)'
+    )
+    st.plotly_chart(fig_scatter, use_container_width=True)
+else:
+    st.info("No valid data for scatter plot (need sales > 0)")
 
 st.markdown("---")
 
