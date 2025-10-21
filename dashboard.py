@@ -44,60 +44,112 @@ st.markdown("""
 def load_data():
     """Load and preprocess the sales data with comprehensive error handling"""
     
-    # Try different possible filenames
+    # Option 1: Try to load from local file (CSV or ZIP)
     possible_files = [
         'sampledata.csv',
         'sample data.csv',
         'sample_data.csv',
-        'sampledata.csv.csv'
+        'sampledata.csv.csv',
+        'sampledata.zip',
+        'sampledata.csv.zip'
     ]
     
     file_found = None
+    is_zip = False
     for filename in possible_files:
         if os.path.exists(filename):
             file_found = filename
+            is_zip = filename.endswith('.zip')
             break
     
-    if file_found is None:
+    # Option 2: If no local file, try loading from URL
+    # Uncomment and add your URL if hosting externally
+    # CSV_URL = "https://your-file-hosting-url/sampledata.csv"
+    CSV_URL = None
+    
+    if file_found is None and CSV_URL is None:
         st.error("❌ **CSV file not found!**")
         st.info("💡 Looking for one of these files: " + ", ".join(possible_files))
         st.info("📁 Current directory contents:")
         try:
-            files = [f for f in os.listdir('.') if f.endswith('.csv')]
-            if files:
-                st.write("CSV files found:", files)
-            else:
-                st.write("No CSV files found in current directory")
-        except:
-            pass
+            files = os.listdir('.')
+            csv_files = [f for f in files if f.endswith('.csv')]
+            st.write("**All files:**", files[:20])  # Show first 20 files
+            st.write("**CSV files:**", csv_files if csv_files else "None found")
+        except Exception as e:
+            st.write(f"Error listing files: {e}")
         st.stop()
     
+    # Determine source
+    if CSV_URL and file_found is None:
+        source = CSV_URL
+        st.info(f"📥 Loading data from URL...")
+    else:
+        source = file_found
+    
     try:
-        # First, let's check what's in the file
-        with open(file_found, 'r', encoding='utf-8') as f:
-            first_line = f.readline()
+        # Handle ZIP files
+        if is_zip:
+            import zipfile
+            st.info(f"📦 Extracting data from compressed file: {source}")
             
-        # Check if file is empty
-        if not first_line.strip():
-            st.error("❌ The CSV file is empty!")
-            st.stop()
-        
-        # Read the CSV with multiple fallback options
-        try:
-            # Try standard read first
-            df = pd.read_csv(file_found, encoding='utf-8')
-        except:
+            with zipfile.ZipFile(source, 'r') as zip_ref:
+                # Get the first CSV file in the zip
+                csv_files = [f for f in zip_ref.namelist() if f.endswith('.csv')]
+                if not csv_files:
+                    st.error("❌ No CSV file found in the ZIP!")
+                    st.stop()
+                
+                csv_filename = csv_files[0]
+                st.info(f"📄 Found: {csv_filename}")
+                
+                # Read CSV directly from ZIP
+                with zip_ref.open(csv_filename) as csv_file:
+                    df = pd.read_csv(csv_file, encoding='utf-8')
+        else:
+            # First, let's check what's in the file
+            file_size = os.path.getsize(source) if not CSV_URL else "Unknown"
+            st.info(f"📄 File size: {file_size:,} bytes" if isinstance(file_size, int) else f"📄 Loading from URL")
+            
+            with open(source, 'r', encoding='utf-8') as f:
+                first_line = f.readline()
+                second_line = f.readline()
+                
+            # Check if file is empty
+            if not first_line.strip():
+                st.error("❌ The CSV file is empty!")
+                st.error(f"File size on disk: {file_size} bytes")
+                st.info("💡 **This means the file wasn't uploaded properly to GitHub.**")
+                st.info("**Solutions:**")
+                st.markdown("""
+                1. Compress the file to .zip and upload that instead
+                2. Use GitHub's web interface to upload
+                3. Host the CSV elsewhere and load from URL
+                4. Use GitHub Releases for large files
+                """)
+                st.stop()
+                
+            # Show preview
+            with st.expander("🔍 File preview - First 2 lines"):
+                st.code(f"Line 1: {first_line[:200]}")
+                st.code(f"Line 2: {second_line[:200]}")
+            
+            # Read the CSV with multiple fallback options
             try:
-                # Try with different encoding
-                df = pd.read_csv(file_found, encoding='latin-1')
+                # Try standard read first
+                df = pd.read_csv(source, encoding='utf-8')
             except:
                 try:
-                    # Try with Python engine for more flexibility
-                    df = pd.read_csv(file_found, encoding='utf-8', engine='python', sep=None)
-                except Exception as e:
-                    st.error(f"❌ Cannot parse CSV file: {str(e)}")
-                    st.info(f"First line of file: {first_line}")
-                    st.stop()
+                    # Try with different encoding
+                    df = pd.read_csv(source, encoding='latin-1')
+                except:
+                    try:
+                        # Try with Python engine for more flexibility
+                        df = pd.read_csv(source, encoding='utf-8', engine='python', sep=None)
+                    except Exception as e:
+                        st.error(f"❌ Cannot parse CSV file: {str(e)}")
+                        st.info(f"First line of file: {first_line}")
+                        st.stop()
         
         # Check if dataframe is empty
         if df.empty:
@@ -105,7 +157,7 @@ def load_data():
             st.stop()
         
         # Display column info for debugging (you can comment this out later)
-        st.success(f"✅ Successfully loaded {len(df):,} rows from: **{file_found}**")
+        st.success(f"✅ Successfully loaded {len(df):,} rows from: **{source}**")
         with st.expander("🔍 Click to see detected columns"):
             st.write("**Original Columns:**", list(df.columns))
         
