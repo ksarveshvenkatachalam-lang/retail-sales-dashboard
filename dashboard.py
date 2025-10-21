@@ -45,13 +45,16 @@ def load_data():
     """Load and preprocess the sales data with comprehensive error handling"""
     
     # Option 1: Try to load from local file (CSV or ZIP)
+    # Check for ZIP files first (compressed versions)
     possible_files = [
+        'sample data.zip',      # With space
+        'sampledata.zip',       # Without space
+        'sample data.csv.zip',  # Alternative naming
+        'sampledata.csv.zip',   # Alternative naming
+        'sample data.csv',      # Fallback to CSV
         'sampledata.csv',
-        'sample data.csv',
         'sample_data.csv',
-        'sampledata.csv.csv',
-        'sampledata.zip',
-        'sampledata.csv.zip'
+        'sampledata.csv.csv'
     ]
     
     file_found = None
